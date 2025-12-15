@@ -1,20 +1,12 @@
 {
-  "name": "휴대폰 특판",
-  "short_name": "특판",
-  "start_url": "index.html",
+  "name": "복지관 2층 휴대폰 특판 안내",
+  "short_name": "복지관2층",
+  "start_url": "/",
   "display": "standalone",
-  "background_color": "#050814",
-  "theme_color": "#ff8a00",
+  "background_color": "#ffffff",
+  "theme_color": "#0ea5e9",
   "icons": [
-    {
-      "src": "icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-      {
-      "src": "icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png"
-    }
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
   ]
 }
