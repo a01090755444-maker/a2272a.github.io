@@ -9,17 +9,15 @@
   <meta name="description" content="복지관 2층 휴대폰 매장 특판 전용 사이트. SK·KT·LG 휴대폰 특판, 인터넷·TV 현금 지원, 알뜰요금 3,300원~ 실시간 안내." />
   <link rel="canonical" href="https://a2272a.github.io/" />
   <meta name="robots" content="index,follow" />
-
-  <!-- (화면엔 안 보이지만 검색용 키워드 보강) -->
   <meta name="keywords" content="복지관 2층 휴대폰, 휴대폰 특판, 알뜰요금 3300원, 휴대폰 성지, 연구소 휴대폰, 인터넷 TV 현금지원" />
 
-  <!-- PWA -->
-  <link rel="manifest" href="manifest.json" />
+  <!-- PWA (경로 ./ 고정) -->
+  <link rel="manifest" href="./manifest.json" />
 
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('service-worker.js').catch(()=>{});
+        navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
       });
     }
   </script>
@@ -29,20 +27,8 @@
       --bg:#f4fbff;
       --ink:#0b1220;
       --sub:#334155;
-
-      --skt:#ff3b4a;
-      --kt:#111827;
-      --lg:#c026d3;
-      --internet:#f97316;
-      --mvno:#16a34a;
-
       --blue:#0ea5e9;
       --blue2:#2563eb;
-
-      --kakao:#fee500;
-      --kakao-border:#facc15;
-
-      --radius:24px;
     }
     *{box-sizing:border-box}
     body{
@@ -114,14 +100,41 @@
     .content{padding:14px 14px 34px}
     .tab-panel{display:none}
     .tab-panel.active{display:block}
+
+    /* 디버그 박스 */
+    .debug{
+      border:1px dashed rgba(15,23,42,0.25);
+      background:rgba(255,255,255,0.8);
+      border-radius:16px;
+      padding:10px 12px;
+      margin:12px 0 14px;
+      font-weight:900;
+      color:#0f172a;
+    }
+
+    /* 카드 */
+    .card{
+      border:1px solid rgba(15,23,42,0.10);
+      border-radius:18px;
+      padding:14px 14px;
+      margin:10px 0;
+      background:#fff;
+      box-shadow:0 12px 22px rgba(15,23,42,0.06);
+    }
+    .card-title{font-weight:1000;font-size:16px}
+    .card-sub{margin-top:6px;color:#334155;font-weight:800;font-size:13px}
+    .pillwrap{margin-top:10px;display:flex;gap:10px;flex-wrap:wrap}
+    .pill{padding:6px 10px;border-radius:999px;font-weight:1000}
+    .pill-cash{background:#e0f2fe}
+    .pill-fee{background:#dcfce7}
+    .note{margin-top:10px;color:#475569;font-size:13px;font-weight:700}
+    .muted{color:#64748b;font-weight:900;margin:14px 2px}
+    .err{color:#ef4444;font-weight:1000}
   </style>
 </head>
 
 <body>
-  <!-- 검색 보강용 숨김 텍스트 -->
-  <div style="display:none">
-    복지관 2층 휴대폰 매장 특판 전용 사이트
-  </div>
+  <div style="display:none">복지관 2층 휴대폰 매장 특판 전용 사이트</div>
 
   <div class="app">
     <header class="hero">
@@ -140,6 +153,8 @@
     </div>
 
     <main class="content">
+      <div id="debug" class="debug">로딩 시작…</div>
+
       <section class="tab-panel active" data-panel="skt"><div id="list-skt"></div></section>
       <section class="tab-panel" data-panel="kt"><div id="list-kt"></div></section>
       <section class="tab-panel" data-panel="lg"><div id="list-lg"></div></section>
@@ -149,15 +164,148 @@
   </div>
 
   <script>
+    // ===== 탭 =====
     const tabs=document.querySelectorAll(".tab-btn");
     const panels=document.querySelectorAll(".tab-panel");
     tabs.forEach(b=>b.onclick=()=>{
       tabs.forEach(x=>x.classList.remove("active"));
       panels.forEach(p=>p.classList.remove("active"));
       b.classList.add("active");
-      document.querySelector(`[data-panel="${b.dataset.tab}"]`).classList.add("active");
+      const target = document.querySelector(`[data-panel="${b.dataset.tab}"]`);
+      if (target) target.classList.add("active");
       window.scrollTo({top:0,behavior:"smooth"});
     });
+
+    // ===== CSV 로드 + 디버그 표시 =====
+    const debugEl = document.getElementById("debug");
+    const LIST_IDS = { skt:"list-skt", kt:"list-kt", lg:"list-lg", internet:"list-internet", mvno:"list-mvno" };
+
+    function setDebug(msg){ debugEl.textContent = msg; }
+
+    function parseCSV(text){
+      const rows=[];
+      const lines=text.replace(/\r/g,"").split("\n").filter(l=>l.trim().length);
+      for(const line of lines){
+        const out=[]; let cur="", inQ=false;
+        for(let i=0;i<line.length;i++){
+          const ch=line[i];
+          if(ch === '"'){
+            if(inQ && line[i+1] === '"'){ cur += '"'; i++; }
+            else inQ = !inQ;
+          } else if(ch === "," && !inQ){
+            out.push(cur.trim()); cur="";
+          } else cur += ch;
+        }
+        out.push(cur.trim());
+        rows.push(out);
+      }
+      return rows;
+    }
+    const esc = (s="") => String(s)
+      .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+
+    function cardHTML(item){
+      const model = item["기종"] || item["모델"] || item["상품명"] || item["model"] || item["Model"] || "";
+      const plan  = item["요금제"] || item["요금"] || item["plan"] || "";
+      const cash  = item["현금지원"] || item["지원금"] || item["현금"] || item["cash"] || "";
+      const fee   = item["월요금"] || item["월 요금"] || item["monthly"] || item["fee"] || "";
+      const note  = item["비고"] || item["메모"] || item["note"] || "";
+
+      return `
+        <div class="card">
+          <div class="card-title">${esc(model) || "항목"}</div>
+          ${plan ? `<div class="card-sub">${esc(plan)}</div>` : ``}
+          <div class="pillwrap">
+            ${cash ? `<span class="pill pill-cash">현금 ${esc(cash)}</span>` : ``}
+            ${fee  ? `<span class="pill pill-fee">월 ${esc(fee)}</span>` : ``}
+          </div>
+          ${note ? `<div class="note">${esc(note)}</div>` : ``}
+        </div>
+      `;
+    }
+
+    function render(tabKey, items){
+      const el = document.getElementById(LIST_IDS[tabKey]);
+      if(!el) return;
+      if(!items.length){
+        el.innerHTML = `<p class="muted">등록된 특판이 없습니다. (CSV 분류/값 확인)</p>`;
+        return;
+      }
+      el.innerHTML = items.map(cardHTML).join("");
+    }
+
+    function norm(v=""){ return String(v).replace(/\s/g,"").toUpperCase(); }
+
+    async function loadAndRender(){
+      // 먼저 “스크립트 실행 여부”가 화면에 찍히게
+      setDebug("CSV 불러오는 중… (./data.csv)");
+
+      // 리스트에 로딩 문구를 강제 출력: 렌더가 아예 안 되는지 바로 확인 가능
+      Object.values(LIST_IDS).forEach(id=>{
+        const el=document.getElementById(id);
+        if(el) el.innerHTML = `<p class="muted">로딩중…</p>`;
+      });
+
+      try{
+        const res = await fetch("./data.csv", { cache:"no-store" });
+        setDebug(`data.csv 응답: ${res.status} ${res.ok ? "OK" : "FAIL"}`);
+
+        if(!res.ok) throw new Error("data.csv 로드 실패(404/권한/경로)");
+
+        const csvText = await res.text();
+        const rows = parseCSV(csvText);
+        if(rows.length < 2) throw new Error("CSV 내용이 비어있음(헤더/데이터 없음)");
+
+        const headers = rows[0].map(h=>h.trim());
+        const data = rows.slice(1).map(cols=>{
+          const obj={};
+          headers.forEach((h,i)=> obj[h] = (cols[i] ?? "").trim());
+          return obj;
+        });
+
+        // 분류 필드 자동 탐지 (carrier/통신사/구분/카테고리 등)
+        const keyField =
+          headers.find(h => ["carrier","Carrier","통신사","구분","카테고리","tab","탭"].includes(h)) || headers[0];
+
+        // 분류가 한 번이라도 성공했는지 표시
+        setDebug(`CSV 로드 성공: ${data.length}행 / 분류필드: ${keyField}`);
+
+        const skt = data.filter(d => ["SKT","SK"].includes(norm(d[keyField])));
+        const kt  = data.filter(d => ["KT"].includes(norm(d[keyField])));
+        const lg  = data.filter(d => ["LGU+","LGU","LG","LGUPLUS"].includes(norm(d[keyField])));
+        const internet = data.filter(d => ["인터넷TV","인터넷·TV","INTERNET","IPTV","인터넷"].includes(norm(d[keyField])));
+        const mvno = data.filter(d => ["알뜰요금","알뜰","MVNO"].includes(norm(d[keyField])));
+
+        // 만약 전부 0개면: 분류값이 다른 것. 그래도 “뭔가”는 보여주기 위해 SKT에 전체를 출력
+        const totalClassified = skt.length+kt.length+lg.length+internet.length+mvno.length;
+        if(totalClassified === 0){
+          setDebug(`CSV 로드 성공했지만 분류 0개. (값 불일치) → SKT 탭에 전체 표시`);
+          render("skt", data);
+          render("kt", []);
+          render("lg", []);
+          render("internet", []);
+          render("mvno", []);
+          return;
+        }
+
+        render("skt", skt);
+        render("kt", kt);
+        render("lg", lg);
+        render("internet", internet);
+        render("mvno", mvno);
+
+      }catch(e){
+        console.error(e);
+        setDebug("오류: " + (e?.message || e));
+        Object.values(LIST_IDS).forEach(id=>{
+          const el=document.getElementById(id);
+          if(el) el.innerHTML = `<p class="err">데이터를 불러오지 못했습니다. (data.csv / 경로 / 캐시 확인)</p>`;
+        });
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", loadAndRender);
   </script>
 </body>
 </html>
