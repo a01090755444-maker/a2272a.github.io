@@ -1,163 +1,131 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+<script>
+  // ===== CSV 로드 + 탭별 렌더 =====
+  const LIST_IDS = {
+    skt: "list-skt",
+    kt: "list-kt",
+    lg: "list-lg",
+    internet: "list-internet",
+    mvno: "list-mvno",
+  };
 
-  <!-- 🔎 Google 검색 최적화 -->
-  <title>복지관 2층 휴대폰 특판 안내 | SK·KT·LG · 인터넷TV · 알뜰요금</title>
-  <meta name="description" content="복지관 2층 휴대폰 매장 특판 전용 사이트. SK·KT·LG 휴대폰 특판, 인터넷·TV 현금 지원, 알뜰요금 3,300원~ 실시간 안내." />
-  <link rel="canonical" href="https://a2272a.github.io/" />
-  <meta name="robots" content="index,follow" />
+  // CSV 한 줄 파싱(따옴표 포함 대응)
+  function parseCSV(text) {
+    const rows = [];
+    const lines = text.replace(/\r/g, "").split("\n").filter(l => l.trim().length);
+    for (const line of lines) {
+      const out = [];
+      let cur = "", inQ = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+          else inQ = !inQ;
+        } else if (ch === "," && !inQ) {
+          out.push(cur.trim()); cur = "";
+        } else {
+          cur += ch;
+        }
+      }
+      out.push(cur.trim());
+      rows.push(out);
+    }
+    return rows;
+  }
 
-  <!-- (화면엔 안 보이지만 검색용 키워드 보강) -->
-  <meta name="keywords" content="복지관 2층 휴대폰, 휴대폰 특판, 알뜰요금 3300원, 휴대폰 성지, 연구소 휴대폰, 인터넷 TV 현금지원" />
+  function escapeHtml(s="") {
+    return String(s)
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#039;");
+  }
 
-  <!-- PWA -->
-  <link rel="manifest" href="manifest.json" />
+  // 카드 UI (필요하면 네 기존 카드 디자인으로 바꿔도 됨)
+  function cardHTML(item) {
+    // 기대 컬럼 예시: 통신사,기종,요금제,현금지원,월요금,비고
+    const model = item["기종"] || item["모델"] || item["상품명"] || "";
+    const plan  = item["요금제"] || item["요금"] || "";
+    const cash  = item["현금지원"] || item["지원금"] || item["현금"] || "";
+    const fee   = item["월요금"] || item["월 요금"] || "";
+    const note  = item["비고"] || item["메모"] || "";
 
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('service-worker.js').catch(()=>{});
+    return `
+      <div style="
+        border:1px solid rgba(15,23,42,0.10);
+        border-radius:18px;
+        padding:14px 14px;
+        margin:10px 0;
+        background:#fff;
+        box-shadow:0 12px 22px rgba(15,23,42,0.06);
+      ">
+        <div style="font-weight:1000;font-size:16px">${escapeHtml(model)}</div>
+        <div style="margin-top:6px;color:#334155;font-weight:800;font-size:13px">
+          ${escapeHtml(plan)}
+        </div>
+        <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">
+          ${cash ? `<span style="padding:6px 10px;border-radius:999px;background:#e0f2fe;font-weight:1000">현금 ${escapeHtml(cash)}</span>` : ``}
+          ${fee  ? `<span style="padding:6px 10px;border-radius:999px;background:#dcfce7;font-weight:1000">월 ${escapeHtml(fee)}</span>` : ``}
+        </div>
+        ${note ? `<div style="margin-top:10px;color:#475569;font-size:13px;font-weight:700">${escapeHtml(note)}</div>` : ``}
+      </div>
+    `;
+  }
+
+  function renderTo(tabKey, items) {
+    const el = document.getElementById(LIST_IDS[tabKey]);
+    if (!el) return;
+
+    if (!items.length) {
+      el.innerHTML = `<p style="color:#64748b;font-weight:900;margin:14px 2px">등록된 특판이 없습니다.</p>`;
+      return;
+    }
+    el.innerHTML = items.map(cardHTML).join("");
+  }
+
+  async function loadAndRender() {
+    try {
+      // 중요: 상대경로 고정
+      const res = await fetch("./data.csv", { cache: "no-store" });
+      if (!res.ok) throw new Error("data.csv 로드 실패: " + res.status);
+
+      const csvText = await res.text();
+      const rows = parseCSV(csvText);
+      if (rows.length < 2) throw new Error("CSV 데이터가 비어있음");
+
+      const headers = rows[0].map(h => h.trim());
+      const data = rows.slice(1).map(cols => {
+        const obj = {};
+        headers.forEach((h, i) => obj[h] = (cols[i] ?? "").trim());
+        return obj;
+      });
+
+      // 통신사/구분 컬럼 자동 탐지
+      const keyField =
+        (headers.find(h => ["탭","구분","카테고리","통신사"].includes(h)) || "통신사");
+
+      const norm = (v="") => String(v).replace(/\s/g,"").toUpperCase();
+
+      const skt = data.filter(d => ["SKT","SK"].includes(norm(d[keyField])));
+      const kt  = data.filter(d => ["KT"].includes(norm(d[keyField])));
+      const lg  = data.filter(d => ["LGU+","LGU","LG"].includes(norm(d[keyField])));
+      const internet = data.filter(d => ["인터넷TV","인터넷·TV","INTERNET","IPTV","인터넷"].includes(norm(d[keyField])));
+      const mvno = data.filter(d => ["알뜰요금","알뜰","MVNO"].includes(norm(d[keyField])));
+
+      renderTo("skt", skt);
+      renderTo("kt", kt);
+      renderTo("lg", lg);
+      renderTo("internet", internet);
+      renderTo("mvno", mvno);
+    } catch (e) {
+      console.error(e);
+      // 에러가 나도 사용자 화면에 표시
+      Object.values(LIST_IDS).forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = `<p style="color:#ef4444;font-weight:1000">데이터를 불러오지 못했습니다. (data.csv 확인)</p>`;
       });
     }
-  </script>
+  }
 
-  <style>
-    :root{
-      --bg:#f4fbff;
-      --ink:#0b1220;
-      --sub:#334155;
-
-      --skt:#ff3b4a;
-      --kt:#111827;
-      --lg:#c026d3;
-      --internet:#f97316;
-      --mvno:#16a34a;
-
-      --blue:#0ea5e9;
-      --blue2:#2563eb;
-
-      --kakao:#fee500;
-      --kakao-border:#facc15;
-
-      --radius:24px;
-    }
-    *{box-sizing:border-box}
-    body{
-      margin:0;
-      font-family:-apple-system,BlinkMacSystemFont,'Noto Sans KR',sans-serif;
-      color:var(--ink);
-      background:
-        radial-gradient(1200px 450px at 10% 0%, rgba(14,165,233,0.18) 0%, rgba(14,165,233,0) 55%),
-        radial-gradient(900px 420px at 95% 22%, rgba(34,197,94,0.12) 0%, rgba(34,197,94,0) 60%),
-        linear-gradient(180deg, #ffffff 0%, var(--bg) 35%, #ffffff 100%);
-    }
-    .app{
-      width:100%;
-      min-height:100vh;
-      display:flex;
-      flex-direction:column;
-    }
-    @media(min-width:1100px){
-      .app{
-        max-width:1100px;
-        margin:18px auto;
-        border-radius:28px;
-        overflow:hidden;
-        background:#fff;
-        box-shadow:0 26px 60px rgba(15,23,42,0.14);
-      }
-    }
-    .hero{
-      padding:18px 18px 16px;
-      background:
-        radial-gradient(1000px 420px at 15% 0%, rgba(14,165,233,0.22) 0%, rgba(14,165,233,0) 60%),
-        linear-gradient(180deg, #ffffff 0%, #f0fbff 100%);
-      border-bottom:1px solid rgba(15,23,42,0.08);
-    }
-    .hero-title{
-      margin:0;
-      font-size:32px;
-      font-weight:1000;
-      letter-spacing:-0.06em;
-      line-height:1.06;
-    }
-    .hero-sub{
-      margin:8px 0 0;
-      font-size:15px;
-      font-weight:1000;
-      color:var(--sub);
-    }
-    .tab-bar{
-      position:sticky; top:0; z-index:30;
-      background:rgba(255,255,255,0.94);
-      backdrop-filter:saturate(180%) blur(10px);
-      border-bottom:1px solid rgba(15,23,42,0.08);
-      padding:10px 12px 12px;
-    }
-    .tabs{display:flex;gap:10px}
-    .tab-btn{
-      flex:1;border:none;cursor:pointer;
-      padding:14px 10px;border-radius:999px;
-      font-size:15px;font-weight:1000;
-      background:#fff;color:#0b1220;
-      border:1px solid rgba(15,23,42,0.10);
-      box-shadow:0 12px 22px rgba(15,23,42,0.08);
-    }
-    .tab-btn.active{
-      background:linear-gradient(135deg, var(--blue) 0%, var(--blue2) 100%);
-      color:#fff;
-      box-shadow:0 18px 30px rgba(37,99,235,0.22);
-    }
-    .content{padding:14px 14px 34px}
-    .tab-panel{display:none}
-    .tab-panel.active{display:block}
-  </style>
-</head>
-
-<body>
-  <!-- 검색 보강용 숨김 텍스트 -->
-  <div style="display:none">
-    복지관 2층 휴대폰 매장 특판 전용 사이트
-  </div>
-
-  <div class="app">
-    <header class="hero">
-      <h1 class="hero-title">복지관 2층 휴대폰 특판 안내</h1>
-      <div class="hero-sub">SK·KT·LG / 인터넷·TV 현금 최대지원 / 알뜰요금 3,300원~</div>
-    </header>
-
-    <div class="tab-bar">
-      <div class="tabs">
-        <button class="tab-btn active" data-tab="skt">SKT</button>
-        <button class="tab-btn" data-tab="kt">KT</button>
-        <button class="tab-btn" data-tab="lg">LGU+</button>
-        <button class="tab-btn" data-tab="internet">인터넷·TV</button>
-        <button class="tab-btn" data-tab="mvno">알뜰요금</button>
-      </div>
-    </div>
-
-    <main class="content">
-      <section class="tab-panel active" data-panel="skt"><div id="list-skt"></div></section>
-      <section class="tab-panel" data-panel="kt"><div id="list-kt"></div></section>
-      <section class="tab-panel" data-panel="lg"><div id="list-lg"></div></section>
-      <section class="tab-panel" data-panel="internet"><div id="list-internet"></div></section>
-      <section class="tab-panel" data-panel="mvno"><div id="list-mvno"></div></section>
-    </main>
-  </div>
-
-  <script>
-    const tabs=document.querySelectorAll(".tab-btn");
-    const panels=document.querySelectorAll(".tab-panel");
-    tabs.forEach(b=>b.onclick=()=>{
-      tabs.forEach(x=>x.classList.remove("active"));
-      panels.forEach(p=>p.classList.remove("active"));
-      b.classList.add("active");
-      document.querySelector(`[data-panel="${b.dataset.tab}"]`).classList.add("active");
-      window.scrollTo({top:0,behavior:"smooth"});
-    });
-  </script>
-</body>
-</html>
+  document.addEventListener("DOMContentLoaded", loadAndRender);
+</script>
